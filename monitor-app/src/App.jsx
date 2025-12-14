@@ -6,7 +6,7 @@ import {
   AlertTriangle, Clock, TrendingUp
 } from 'lucide-react';
 
-const SERVER_URL = 'http://YOUR_SERVER_IP:3001'; // Ganti dengan IP server
+const SERVER_URL = 'https://fermanta-baby-monitor-server.hf.space';; // Ganti dengan IP server
 
 export default function MonitorApp() {
   const [socket, setSocket] = useState(null);

@@ -6,7 +6,7 @@ import {
   Moon, Sun, Activity, Battery, Signal
 } from 'lucide-react';
 
-const SERVER_URL = 'http://YOUR_SERVER_IP:3001'; // Ganti dengan IP server Anda
+const SERVER_URL = 'https://fermanta-baby-monitor-server.hf.space'; // Ganti dengan IP server Anda
 
 export default function CameraApp() {
   const [socket, setSocket] = useState(null);

@@ -73,52 +73,94 @@ export default function CameraApp() {
     };
   }, []);
 
-  // Create WebRTC peer connection
+  // Tambahkan TURN server untuk koneksi yang lebih reliable
   const createPeerConnection = async (monitorId, socket) => {
     const configuration = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ]
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        // Free TURN servers (untuk testing)
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ],
+      iceCandidatePoolSize: 10
     };
-
+  
+    console.log('Creating peer connection for monitor:', monitorId);
     const pc = new RTCPeerConnection(configuration);
     peerConnections.current.set(monitorId, pc);
-
-    // Add local stream tracks
+  
+    // Add tracks
     if (streamRef.current) {
+      console.log('Adding tracks to peer connection');
       streamRef.current.getTracks().forEach(track => {
+        console.log('Adding track:', track.kind);
         pc.addTrack(track, streamRef.current);
       });
+    } else {
+      console.error('No stream available!');
     }
-
-    // Handle ICE candidates
+  
+    // ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log('Sending ICE candidate');
         socket.emit('ice-candidate', {
           candidate: event.candidate,
           targetId: monitorId
         });
       }
     };
-
+  
+    // Connection state
     pc.onconnectionstatechange = () => {
+      console.log('Connection state:', pc.connectionState);
+      if (pc.connectionState === 'connected') {
+        console.log('✅ WebRTC Connected!');
+      }
       if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+        console.log('❌ WebRTC Disconnected');
         peerConnections.current.delete(monitorId);
         setMonitorCount(prev => Math.max(0, prev - 1));
       }
     };
-
-    // Create and send offer
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    
-    socket.emit('offer', {
-      offer: offer,
-      targetId: monitorId
-    });
+  
+    pc.oniceconnectionstatechange = () => {
+      console.log('ICE connection state:', pc.iceConnectionState);
+    };
+  
+    // Create offer
+    try {
+      console.log('Creating offer...');
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: false
+      });
+      
+      console.log('Setting local description...');
+      await pc.setLocalDescription(offer);
+      
+      console.log('Sending offer to monitor:', monitorId);
+      socket.emit('offer', {
+        offer: pc.localDescription,
+        targetId: monitorId
+      });
+    } catch (err) {
+      console.error('Error creating offer:', err);
+    }
   };
-
+    
   // Generate room code
   const generateRoom = async () => {
     try {

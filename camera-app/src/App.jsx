@@ -3,10 +3,9 @@ import { io } from 'socket.io-client';
 import { 
   Camera, Video, VideoOff, Wifi, WifiOff, 
   Copy, Check, RotateCcw, Moon, Sun, Activity, Battery, Signal,
-  Mic, MicOff, Volume2, Settings
+  Mic, MicOff, Volume2, Settings, Users, Eye, AlertCircle
 } from 'lucide-react';
 
-// Ganti dengan URL Hugging Face Space Anda
 const SERVER_URL = 'https://fermanta-baby-monitor-server.hf.space';
 
 export default function CameraApp() {
@@ -16,11 +15,13 @@ export default function CameraApp() {
   const [roomCode, setRoomCode] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [monitorCount, setMonitorCount] = useState(0);
+  
+  // Monitor Management - IMPROVED
+  const [connectedMonitors, setConnectedMonitors] = useState(new Map());
   const [copied, setCopied] = useState(false);
   
   // Media States
-  const [audioEnabled, setAudioEnabled] = useState(true); // Microphone ON by default
+  const [audioEnabled, setAudioEnabled] = useState(true);
   const [micMuted, setMicMuted] = useState(false);
   const [facingMode, setFacingMode] = useState('environment');
   const [audioLevel, setAudioLevel] = useState(0);
@@ -33,20 +34,37 @@ export default function CameraApp() {
   const [nightMode, setNightMode] = useState(false);
   const [error, setError] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugLogs, setDebugLogs] = useState([]);
   
   // Refs
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
-  const peerConnections = useRef(new Map());
+  const socketRef = useRef(null);
+  const peerConnectionsRef = useRef(new Map());
+  const pendingConnectionsRef = useRef(new Set());
   const analysisIntervalRef = useRef(null);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const audioIntervalRef = useRef(null);
 
-  // Initialize socket connection
+  // Debug logger
+  const addDebugLog = useCallback((message, type = 'info') => {
+    const timestamp = new Date().toLocaleTimeString('id-ID');
+    console.log(`[${type.toUpperCase()}] ${message}`);
+    setDebugLogs(prev => [{
+      time: timestamp,
+      message,
+      type
+    }, ...prev.slice(0, 49)]);
+  }, []);
+
+  // ========================================
+  // SOCKET INITIALIZATION
+  // ========================================
   useEffect(() => {
-    console.log('Connecting to server...');
+    addDebugLog('Connecting to server...');
     
     const newSocket = io(SERVER_URL, {
       transports: ['websocket', 'polling'],
@@ -56,70 +74,144 @@ export default function CameraApp() {
       reconnectionDelay: 1000
     });
 
+    socketRef.current = newSocket;
+
     newSocket.on('connect', () => {
-      console.log('✅ Connected to server');
+      addDebugLog('✅ Socket connected: ' + newSocket.id, 'success');
       setSocketConnected(true);
       setError('');
     });
 
     newSocket.on('disconnect', (reason) => {
-      console.log('❌ Disconnected:', reason);
+      addDebugLog(`❌ Disconnected: ${reason}`, 'error');
       setSocketConnected(false);
     });
 
     newSocket.on('connect_error', (err) => {
-      console.error('Connection error:', err);
+      addDebugLog(`❌ Connection error: ${err.message}`, 'error');
       setError('Gagal terhubung ke server');
       setSocketConnected(false);
     });
 
     newSocket.on('camera-joined', ({ roomCode }) => {
+      addDebugLog(`✅ Joined room: ${roomCode}`, 'success');
       setIsConnected(true);
-      console.log('✅ Joined room:', roomCode);
     });
 
+    // ========================================
+    // MONITOR CONNECTED - PREVENT DUPLICATES
+    // ========================================
     newSocket.on('monitor-connected', async ({ monitorId }) => {
-      console.log('📺 Monitor connected:', monitorId);
-      setMonitorCount(prev => prev + 1);
+      addDebugLog(`📺 Monitor connected: ${monitorId}`);
+      
+      // ✅ CHECK: Already pending?
+      if (pendingConnectionsRef.current.has(monitorId)) {
+        addDebugLog(`⏭️ Skipping duplicate for: ${monitorId}`, 'warning');
+        return;
+      }
+
+      // ✅ CHECK: Already connected?
+      const existingPeer = peerConnectionsRef.current.get(monitorId);
+      if (existingPeer) {
+        const state = existingPeer.connectionState;
+        if (state === 'connected' || state === 'connecting') {
+          addDebugLog(`✅ Already ${state} to: ${monitorId}`, 'warning');
+          return;
+        }
+      }
+
+      // Add to monitors list
+      setConnectedMonitors(prev => {
+        const newMap = new Map(prev);
+        newMap.set(monitorId, { 
+          id: monitorId, 
+          status: 'connecting', 
+          connectedAt: null 
+        });
+        return newMap;
+      });
+
       await createPeerConnection(monitorId, newSocket);
     });
 
-    newSocket.on('answer', async ({ answer, senderId }) => {
-      console.log('📥 Received answer from:', senderId);
-      const pc = peerConnections.current.get(senderId);
+    // ========================================
+    // MONITOR DISCONNECTED - CLEANUP
+    // ========================================
+    newSocket.on('monitor-disconnected', ({ monitorId }) => {
+      addDebugLog(`📴 Monitor disconnected: ${monitorId}`, 'warning');
+      
+      // Remove from monitors list
+      setConnectedMonitors(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(monitorId);
+        return newMap;
+      });
+
+      // Cleanup peer connection
+      const pc = peerConnectionsRef.current.get(monitorId);
       if (pc) {
-        try {
-          await pc.setRemoteDescription(new RTCSessionDescription(answer));
-          console.log('✅ Remote description set');
-        } catch (err) {
-          console.error('Error setting remote description:', err);
-        }
+        pc.close();
+        peerConnectionsRef.current.delete(monitorId);
+        addDebugLog(`🗑️ Cleaned up peer: ${monitorId}`);
+      }
+
+      pendingConnectionsRef.current.delete(monitorId);
+    });
+
+    // ========================================
+    // WEBRTC SIGNALING
+    // ========================================
+    newSocket.on('answer', async ({ answer, senderId }) => {
+      addDebugLog(`📥 Received answer from: ${senderId}`);
+      
+      const pc = peerConnectionsRef.current.get(senderId);
+      if (!pc) {
+        addDebugLog(`⚠️ No peer connection for: ${senderId}`, 'warning');
+        return;
+      }
+
+      // ✅ Validate signaling state
+      if (pc.signalingState !== 'have-local-offer') {
+        addDebugLog(`⚠️ Wrong signaling state: ${pc.signalingState}`, 'warning');
+        return;
+      }
+
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        addDebugLog(`✅ Remote description set for: ${senderId}`, 'success');
+      } catch (err) {
+        addDebugLog(`❌ Error setting remote description: ${err.message}`, 'error');
       }
     });
 
     newSocket.on('ice-candidate', async ({ candidate, senderId }) => {
-      const pc = peerConnections.current.get(senderId);
+      const pc = peerConnectionsRef.current.get(senderId);
       if (pc && candidate) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          addDebugLog(`🧊 Added ICE candidate from: ${senderId}`);
         } catch (e) {
-          console.error('Error adding ICE candidate:', e);
+          addDebugLog(`❌ ICE error: ${e.message}`, 'error');
         }
       }
     });
 
     newSocket.on('error', ({ message }) => {
+      addDebugLog(`❌ Server error: ${message}`, 'error');
       setError(message);
     });
 
     setSocket(newSocket);
 
     return () => {
+      addDebugLog('🧹 Cleaning up socket...');
       newSocket.disconnect();
     };
-  }, []);
+  }, [addDebugLog]);
 
-  // Audio level monitoring
+  // ========================================
+  // AUDIO MONITORING
+  // ========================================
   const startAudioMonitoring = useCallback((stream) => {
     try {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -142,13 +234,12 @@ export default function CameraApp() {
         }
       }, 100);
       
-      console.log('🎙️ Audio monitoring started');
+      addDebugLog('🎙️ Audio monitoring started', 'success');
     } catch (err) {
-      console.error('Error starting audio monitoring:', err);
+      addDebugLog(`❌ Audio monitoring error: ${err.message}`, 'error');
     }
-  }, []);
+  }, [addDebugLog]);
 
-  // Stop audio monitoring
   const stopAudioMonitoring = useCallback(() => {
     if (audioIntervalRef.current) {
       clearInterval(audioIntervalRef.current);
@@ -160,10 +251,29 @@ export default function CameraApp() {
     }
     analyserRef.current = null;
     setAudioLevel(0);
-  }, []);
+    addDebugLog('🎙️ Audio monitoring stopped');
+  }, [addDebugLog]);
 
-  // Create WebRTC peer connection with audio
+  // ========================================
+  // CREATE PEER CONNECTION
+  // ========================================
   const createPeerConnection = async (monitorId, socket) => {
+    // ✅ PREVENT DUPLICATES
+    if (pendingConnectionsRef.current.has(monitorId)) {
+      addDebugLog(`⏭️ Already creating connection for: ${monitorId}`, 'warning');
+      return;
+    }
+
+    pendingConnectionsRef.current.add(monitorId);
+    addDebugLog(`🔧 Creating peer connection for: ${monitorId}`);
+
+    // Close old connection if exists
+    const oldPc = peerConnectionsRef.current.get(monitorId);
+    if (oldPc) {
+      oldPc.close();
+      addDebugLog(`🗑️ Closed old peer connection for: ${monitorId}`);
+    }
+
     const configuration = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -190,48 +300,90 @@ export default function CameraApp() {
       iceCandidatePoolSize: 10
     };
 
-    console.log('🔧 Creating peer connection for:', monitorId);
-    const pc = new RTCPeerConnection(configuration);
-    peerConnections.current.set(monitorId, pc);
-
-    // Add ALL tracks (video AND audio)
-    if (streamRef.current) {
-      const tracks = streamRef.current.getTracks();
-      console.log(`📤 Adding ${tracks.length} tracks to peer connection`);
-      
-      tracks.forEach(track => {
-        console.log(`  - Adding ${track.kind} track (enabled: ${track.enabled})`);
-        pc.addTrack(track, streamRef.current);
-      });
-    } else {
-      console.error('❌ No stream available!');
-    }
-
-    // ICE candidates
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emit('ice-candidate', {
-          candidate: event.candidate,
-          targetId: monitorId
-        });
-      }
-    };
-
-    // Connection state
-    pc.onconnectionstatechange = () => {
-      console.log(`🔌 Connection state [${monitorId}]:`, pc.connectionState);
-      
-      if (pc.connectionState === 'connected') {
-        console.log('✅ WebRTC Connected with audio!');
-      }
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        peerConnections.current.delete(monitorId);
-        setMonitorCount(prev => Math.max(0, prev - 1));
-      }
-    };
-
-    // Create offer with audio
     try {
+      const pc = new RTCPeerConnection(configuration);
+      peerConnectionsRef.current.set(monitorId, pc);
+
+      // ========================================
+      // ADD TRACKS (VIDEO + AUDIO)
+      // ========================================
+      if (streamRef.current) {
+        const tracks = streamRef.current.getTracks();
+        addDebugLog(`📤 Adding ${tracks.length} tracks to peer connection`);
+        
+        tracks.forEach(track => {
+          pc.addTrack(track, streamRef.current);
+          addDebugLog(`  - Adding ${track.kind} track (enabled: ${track.enabled})`);
+        });
+      } else {
+        addDebugLog(`❌ No stream available!`, 'error');
+        pendingConnectionsRef.current.delete(monitorId);
+        return;
+      }
+
+      // ========================================
+      // ICE CANDIDATES
+      // ========================================
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('ice-candidate', {
+            candidate: event.candidate,
+            targetId: monitorId
+          });
+        }
+      };
+
+      // ========================================
+      // CONNECTION STATE MONITORING
+      // ========================================
+      pc.onconnectionstatechange = () => {
+        const state = pc.connectionState;
+        addDebugLog(`🔌 Connection state [${monitorId}]: ${state}`);
+
+        // Update monitor status
+        setConnectedMonitors(prev => {
+          const newMap = new Map(prev);
+          const monitor = newMap.get(monitorId);
+          if (monitor) {
+            monitor.status = state;
+            if (state === 'connected') {
+              monitor.connectedAt = new Date();
+            }
+          }
+          return newMap;
+        });
+
+        if (state === 'connected') {
+          addDebugLog(`✅ WebRTC Connected with audio to: ${monitorId}!`, 'success');
+          pendingConnectionsRef.current.delete(monitorId);
+        } 
+        else if (state === 'failed' || state === 'closed') {
+          addDebugLog(`❌ Connection ${state}: ${monitorId}`, 'error');
+          pendingConnectionsRef.current.delete(monitorId);
+          
+          // Cleanup after delay
+          setTimeout(() => {
+            const currentPc = peerConnectionsRef.current.get(monitorId);
+            if (currentPc === pc) {
+              pc.close();
+              peerConnectionsRef.current.delete(monitorId);
+              addDebugLog(`🗑️ Cleaned up failed peer: ${monitorId}`);
+            }
+          }, 3000);
+        }
+        else if (state === 'disconnected') {
+          addDebugLog(`⚠️ Temporarily disconnected: ${monitorId}`, 'warning');
+        }
+      };
+
+      // ICE connection state
+      pc.oniceconnectionstatechange = () => {
+        addDebugLog(`🧊 ICE state [${monitorId}]: ${pc.iceConnectionState}`);
+      };
+
+      // ========================================
+      // CREATE AND SEND OFFER
+      // ========================================
       const offer = await pc.createOffer({
         offerToReceiveAudio: false,
         offerToReceiveVideo: false
@@ -239,49 +391,65 @@ export default function CameraApp() {
       
       await pc.setLocalDescription(offer);
       
-      console.log('📤 Sending offer with audio to:', monitorId);
+      addDebugLog(`📤 Sending offer with audio to: ${monitorId}`);
       socket.emit('offer', {
         offer: pc.localDescription,
         targetId: monitorId
       });
+
     } catch (err) {
-      console.error('Error creating offer:', err);
+      addDebugLog(`❌ Error creating offer: ${err.message}`, 'error');
+      pendingConnectionsRef.current.delete(monitorId);
+      
+      const pc = peerConnectionsRef.current.get(monitorId);
+      if (pc) {
+        pc.close();
+        peerConnectionsRef.current.delete(monitorId);
+      }
     }
   };
 
-  // Toggle microphone mute
+  // ========================================
+  // TOGGLE MICROPHONE
+  // ========================================
   const toggleMic = useCallback(() => {
     if (streamRef.current) {
       const audioTracks = streamRef.current.getAudioTracks();
       audioTracks.forEach(track => {
-        track.enabled = micMuted; // Toggle: if muted, enable; if enabled, mute
-        console.log(`🎙️ Microphone ${track.enabled ? 'unmuted' : 'muted'}`);
+        track.enabled = micMuted;
+        addDebugLog(`🎙️ Microphone ${track.enabled ? 'unmuted' : 'muted'}`);
       });
       setMicMuted(!micMuted);
     }
-  }, [micMuted]);
+  }, [micMuted, addDebugLog]);
 
-  // Generate room code
+  // ========================================
+  // GENERATE ROOM
+  // ========================================
   const generateRoom = async () => {
     try {
       setError('');
+      addDebugLog('Generating room code...');
+      
       const response = await fetch(`${SERVER_URL}/api/generate-room`);
       const data = await response.json();
+      
       setRoomCode(data.roomCode);
-      console.log('🔑 Room code generated:', data.roomCode);
+      addDebugLog(`🔑 Room code generated: ${data.roomCode}`, 'success');
     } catch (err) {
-      console.error('Error generating room:', err);
+      addDebugLog(`❌ Error generating room: ${err.message}`, 'error');
       setError('Gagal generate room. Periksa koneksi internet.');
     }
   };
 
-  // Start camera WITH AUDIO
+  // ========================================
+  // START CAMERA
+  // ========================================
   const startCamera = async () => {
     try {
       setError('');
-      console.log('📷 Starting camera with audio...');
+      addDebugLog('📷 Starting camera with audio...');
       
-      // Request video AND audio
       const constraints = {
         video: { 
           facingMode: facingMode,
@@ -296,38 +464,40 @@ export default function CameraApp() {
         } : false
       };
       
-      console.log('📋 Media constraints:', constraints);
+      addDebugLog(`📋 Media constraints: ${JSON.stringify(constraints)}`);
       
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       
-      // Log tracks
       const videoTracks = stream.getVideoTracks();
       const audioTracks = stream.getAudioTracks();
-      console.log(`✅ Got ${videoTracks.length} video track(s)`);
-      console.log(`✅ Got ${audioTracks.length} audio track(s)`);
+      
+      addDebugLog(`✅ Got ${videoTracks.length} video track(s)`, 'success');
+      addDebugLog(`✅ Got ${audioTracks.length} audio track(s)`, 'success');
       
       if (audioTracks.length > 0) {
-        console.log('🎙️ Audio track settings:', audioTracks[0].getSettings());
-        // Start audio level monitoring
+        addDebugLog(`🎙️ Audio settings: ${JSON.stringify(audioTracks[0].getSettings())}`);
         startAudioMonitoring(stream);
       }
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
+      
       streamRef.current = stream;
       setIsStreaming(true);
 
       // Join room
       if (socket && roomCode) {
         socket.emit('camera-join', { roomCode });
+        addDebugLog(`📡 Joining room: ${roomCode}`);
       }
 
       // Start auto-analysis
       startAnalysis();
 
     } catch (err) {
-      console.error('Error starting camera:', err);
+      addDebugLog(`❌ Camera error: ${err.message}`, 'error');
+      
       if (err.name === 'NotAllowedError') {
         setError('Izin kamera/mikrofon ditolak. Silakan izinkan akses di pengaturan browser.');
       } else if (err.name === 'NotFoundError') {
@@ -338,40 +508,43 @@ export default function CameraApp() {
     }
   };
 
-  // Stop camera
+  // ========================================
+  // STOP CAMERA
+  // ========================================
   const stopCamera = () => {
-    console.log('🛑 Stopping camera...');
+    addDebugLog('🛑 Stopping camera...');
     
-    // Stop audio monitoring
     stopAudioMonitoring();
     
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
         track.stop();
-        console.log(`  - Stopped ${track.kind} track`);
+        addDebugLog(`  - Stopped ${track.kind} track`);
       });
       streamRef.current = null;
     }
     
     // Close all peer connections
-    peerConnections.current.forEach((pc, id) => {
+    peerConnectionsRef.current.forEach((pc, id) => {
       pc.close();
-      console.log(`  - Closed peer connection: ${id}`);
+      addDebugLog(`  - Closed peer connection: ${id}`);
     });
-    peerConnections.current.clear();
+    peerConnectionsRef.current.clear();
+    pendingConnectionsRef.current.clear();
+    setConnectedMonitors(new Map());
     
     setIsStreaming(false);
     setIsConnected(false);
-    setMonitorCount(0);
     setMicMuted(false);
     
-    // Stop analysis
     if (analysisIntervalRef.current) {
       clearInterval(analysisIntervalRef.current);
     }
   };
 
-  // Switch camera
+  // ========================================
+  // SWITCH CAMERA
+  // ========================================
   const switchCamera = async () => {
     const newFacing = facingMode === 'environment' ? 'user' : 'environment';
     setFacingMode(newFacing);
@@ -382,14 +555,19 @@ export default function CameraApp() {
     }
   };
 
-  // Copy room code
+  // ========================================
+  // COPY ROOM CODE
+  // ========================================
   const copyRoomCode = () => {
     navigator.clipboard.writeText(roomCode);
     setCopied(true);
+    addDebugLog('📋 Room code copied');
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Analyze baby status
+  // ========================================
+  // ANALYZE FRAME
+  // ========================================
   const analyzeFrame = async () => {
     if (!videoRef.current || !canvasRef.current || !socket) return;
 
@@ -409,7 +587,6 @@ export default function CameraApp() {
     
     const imageData = canvas.toDataURL('image/jpeg', 0.5);
 
-    // Send frame to monitors
     socket.emit('baby-status-update', {
       roomCode,
       status: babyStatus,
@@ -423,15 +600,18 @@ export default function CameraApp() {
     setIsAnalyzing(false);
   };
 
-  // Start periodic analysis
   const startAnalysis = () => {
     setTimeout(analyzeFrame, 2000);
     analysisIntervalRef.current = setInterval(analyzeFrame, 15000);
   };
 
-  // Manual status update
+  // ========================================
+  // MANUAL STATUS UPDATE
+  // ========================================
   const updateStatus = (status) => {
     setBabyStatus(status);
+    addDebugLog(`👶 Status updated: ${status}`);
+    
     if (socket && roomCode) {
       socket.emit('baby-status-update', {
         roomCode,
@@ -444,6 +624,29 @@ export default function CameraApp() {
     }
   };
 
+  // ========================================
+  // LIFECYCLE
+  // ========================================
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  // ========================================
+  // CALCULATE STATS
+  // ========================================
+  const activeMonitors = Array.from(connectedMonitors.values()).filter(
+    m => m.status === 'connected'
+  ).length;
+
+  const connectingMonitors = Array.from(connectedMonitors.values()).filter(
+    m => m.status === 'connecting'
+  ).length;
+
+  // ========================================
+  // RENDER
+  // ========================================
   return (
     <div className={`min-h-screen ${nightMode ? 'bg-gray-900' : 'bg-gradient-to-br from-indigo-500 to-purple-600'} p-4 transition-colors`}>
       <div className="max-w-lg mx-auto">
@@ -486,6 +689,12 @@ export default function CameraApp() {
               >
                 {nightMode ? <Sun className="w-5 h-5 text-white" /> : <Moon className="w-5 h-5 text-white" />}
               </button>
+              <button
+                onClick={() => setShowDebug(!showDebug)}
+                className={`p-2 rounded-full ${showDebug ? 'bg-purple-500 text-white' : nightMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'}`}
+              >
+                <Activity className="w-5 h-5" />
+              </button>
             </div>
           </div>
         </div>
@@ -497,7 +706,6 @@ export default function CameraApp() {
               ⚙️ Pengaturan Streaming
             </h3>
             
-            {/* Audio Toggle */}
             <div className="flex items-center justify-between py-3 border-b border-gray-200">
               <div className="flex items-center gap-3">
                 <Mic className={`w-5 h-5 ${audioEnabled ? 'text-green-500' : 'text-gray-400'}`} />
@@ -522,7 +730,6 @@ export default function CameraApp() {
               </button>
             </div>
             
-            {/* Camera Selection */}
             <div className="flex items-center justify-between py-3">
               <div className="flex items-center gap-3">
                 <RotateCcw className={`w-5 h-5 ${nightMode ? 'text-gray-400' : 'text-gray-600'}`} />
@@ -548,7 +755,10 @@ export default function CameraApp() {
         {/* Error Message */}
         {error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl mb-4 flex items-center justify-between">
-            <span className="text-sm">{error}</span>
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-5 h-5" />
+              <span className="text-sm">{error}</span>
+            </div>
             <button onClick={() => setError('')} className="text-red-700 font-bold">✕</button>
           </div>
         )}
@@ -595,8 +805,8 @@ export default function CameraApp() {
             <video
               ref={videoRef}
               autoPlay
+              muted
               playsInline
-              muted // Muted locally to prevent feedback
               className={`w-full h-full object-cover ${nightMode ? 'brightness-125' : ''}`}
             />
             
@@ -609,7 +819,6 @@ export default function CameraApp() {
             {/* Status Overlay */}
             {isStreaming && (
               <>
-                {/* Top Bar */}
                 <div className="absolute top-2 left-2 right-2 flex justify-between items-start">
                   <div className="flex flex-col gap-1">
                     <div className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${
@@ -619,7 +828,6 @@ export default function CameraApp() {
                       {isConnected ? 'Live' : 'Menunggu...'}
                     </div>
                     
-                    {/* Audio indicator */}
                     {audioEnabled && !micMuted && (
                       <div className="px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1 bg-blue-500 text-white">
                         <Mic className="w-3 h-3" />
@@ -635,13 +843,14 @@ export default function CameraApp() {
                         Sync...
                       </div>
                     )}
-                    <div className="bg-black/50 text-white px-3 py-1 rounded-full text-xs">
-                      👁️ {monitorCount} Monitor
+                    <div className="bg-black/50 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1">
+                      <Eye className="w-3 h-3" />
+                      {activeMonitors} Monitor
+                      {connectingMonitors > 0 && ` (+${connectingMonitors})`}
                     </div>
                   </div>
                 </div>
 
-                {/* Audio Level Indicator */}
                 {audioEnabled && !micMuted && (
                   <div className="absolute bottom-12 left-2 right-2">
                     <div className="flex items-center gap-2 bg-black/50 rounded-lg p-2">
@@ -659,7 +868,6 @@ export default function CameraApp() {
                   </div>
                 )}
 
-                {/* Baby Status */}
                 {babyStatus !== 'unknown' && (
                   <div className={`absolute bottom-2 left-2 px-3 py-2 rounded-lg ${
                     babyStatus === 'sleeping' ? 'bg-blue-500' : 'bg-amber-500'
@@ -704,7 +912,7 @@ export default function CameraApp() {
             )}
           </div>
 
-          {/* Audio Controls (when streaming) */}
+          {/* Audio Controls */}
           {isStreaming && audioEnabled && (
             <div className="mt-3">
               <button
@@ -764,7 +972,7 @@ export default function CameraApp() {
 
         {/* Connection Status */}
         {isStreaming && (
-          <div className={`${nightMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl p-4`}>
+          <div className={`${nightMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl p-4 mb-4`}>
             <h3 className={`font-semibold mb-3 ${nightMode ? 'text-white' : 'text-gray-800'}`}>
               📊 Status Koneksi
             </h3>
@@ -777,9 +985,9 @@ export default function CameraApp() {
                 </p>
               </div>
               <div className={`text-center p-2 rounded-xl ${nightMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
-                <Activity className={`w-5 h-5 mx-auto mb-1 ${nightMode ? 'text-indigo-400' : 'text-indigo-600'}`} />
+                <Users className={`w-5 h-5 mx-auto mb-1 ${nightMode ? 'text-indigo-400' : 'text-indigo-600'}`} />
                 <p className={`text-xs ${nightMode ? 'text-gray-400' : 'text-gray-600'}`}>Monitor</p>
-                <p className={`font-semibold text-sm ${nightMode ? 'text-white' : 'text-gray-800'}`}>{monitorCount}</p>
+                <p className={`font-semibold text-sm ${nightMode ? 'text-white' : 'text-gray-800'}`}>{activeMonitors}</p>
               </div>
               <div className={`text-center p-2 rounded-xl ${nightMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
                 <Mic className={`w-5 h-5 mx-auto mb-1 ${!micMuted ? 'text-green-500' : 'text-red-500'}`} />
@@ -799,8 +1007,56 @@ export default function CameraApp() {
           </div>
         )}
 
+        {/* Debug Logs */}
+        {showDebug && (
+          <div className={`${nightMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl p-4 mb-4`}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className={`font-semibold ${nightMode ? 'text-white' : 'text-gray-800'}`}>
+                🔧 Debug Logs
+              </h3>
+              <button 
+                onClick={() => setDebugLogs([])} 
+                className="text-sm text-gray-500"
+              >
+                Clear
+              </button>
+            </div>
+            <div className={`${nightMode ? 'bg-gray-900' : 'bg-gray-100'} rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs`}>
+              {debugLogs.map((log, idx) => (
+                <div key={idx} className={`py-0.5 ${
+                  log.type === 'error' ? 'text-red-500' :
+                  log.type === 'warning' ? 'text-amber-500' :
+                  log.type === 'success' ? 'text-green-500' :
+                  nightMode ? 'text-gray-300' : 'text-gray-700'
+                }`}>
+                  [{log.time}] {log.message}
+                </div>
+              ))}
+              {debugLogs.length === 0 && (
+                <div className="text-gray-500 text-center py-2">No logs yet...</div>
+              )}
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+              <div className={`p-2 rounded ${nightMode ? 'bg-gray-700' : 'bg-gray-200'}`}>
+                <div className={nightMode ? 'text-gray-400' : 'text-gray-600'}>Total Monitors</div>
+                <div className={`font-bold ${nightMode ? 'text-white' : 'text-gray-800'}`}>
+                  {connectedMonitors.size}
+                </div>
+              </div>
+              <div className={`p-2 rounded ${nightMode ? 'bg-gray-700' : 'bg-gray-200'}`}>
+                <div className={nightMode ? 'text-gray-400' : 'text-gray-600'}>Active</div>
+                <div className={`font-bold text-green-500`}>{activeMonitors}</div>
+              </div>
+              <div className={`p-2 rounded ${nightMode ? 'bg-gray-700' : 'bg-gray-200'}`}>
+                <div className={nightMode ? 'text-gray-400' : 'text-gray-600'}>Pending</div>
+                <div className={`font-bold text-yellow-500`}>{pendingConnectionsRef.current.size}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Tips */}
-        <div className={`mt-4 ${nightMode ? 'bg-blue-900/50' : 'bg-blue-50'} rounded-xl p-4`}>
+        <div className={`${nightMode ? 'bg-blue-900/50' : 'bg-blue-50'} rounded-xl p-4`}>
           <p className={`text-sm ${nightMode ? 'text-blue-200' : 'text-blue-800'}`}>
             💡 <strong>Tips:</strong> 
             {!isStreaming 

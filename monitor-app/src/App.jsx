@@ -200,21 +200,31 @@ export default function MonitorApp() {
 
     const configuration = {
       iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-    
-        // TURN SERVER KHUSUS DARI GUA (GRATIS SELAMANYA BUAT KAMU)
         {
-          urls: 'turn:turn.babymonitor.live:3478',
-          username: 'babykamu',
-          credential: 'rahasia123'
+          urls: "stun:stun.relay.metered.ca:80",
         },
         {
-          urls: 'turn:turn.babymonitor.live:3478?transport=tcp',
-          username: 'babykamu',
-          credential: 'rahasia123'
-        }
-      ]
+          urls: "turn:global.relay.metered.ca:80",
+          username: "425f63dce2848b19b6115cc3",
+          credential: "R4IGN2IpEXFZPIMw",
+        },
+        {
+          urls: "turn:global.relay.metered.ca:80?transport=tcp",
+          username: "425f63dce2848b19b6115cc3",
+          credential: "R4IGN2IpEXFZPIMw",
+        },
+        {
+          urls: "turn:global.relay.metered.ca:443",
+          username: "425f63dce2848b19b6115cc3",
+          credential: "R4IGN2IpEXFZPIMw",
+        },
+        {
+          urls: "turns:global.relay.metered.ca:443?transport=tcp",
+          username: "425f63dce2848b19b6115cc3",
+          credential: "R4IGN2IpEXFZPIMw",
+        },
+      ],
+      iceCandidatePoolSize: 10
     };
     
     try {

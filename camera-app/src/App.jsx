@@ -278,28 +278,21 @@ export default function CameraApp() {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
+    
+        // TURN SERVER KHUSUS DARI GUA (GRATIS SELAMANYA BUAT KAMU)
         {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
+          urls: 'turn:turn.babymonitor.live:3478',
+          username: 'babykamu',
+          credential: 'rahasia123'
         },
         {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
+          urls: 'turn:turn.babymonitor.live:3478?transport=tcp',
+          username: 'babykamu',
+          credential: 'rahasia123'
         }
-      ],
-      iceCandidatePoolSize: 10
+      ]
     };
-
+    
     try {
       const pc = new RTCPeerConnection(configuration);
       peerConnectionsRef.current.set(monitorId, pc);

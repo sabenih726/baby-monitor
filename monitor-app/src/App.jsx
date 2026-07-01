@@ -4,7 +4,7 @@ import {
   Monitor, Video, VideoOff, Wifi, WifiOff, Bell, BellOff,
   Moon, Sun, Activity, Maximize, Minimize, Camera, Clock, 
   TrendingUp, RefreshCw, Volume2, VolumeX, AlertTriangle,
-  CheckCircle, XCircle, Loader, Settings
+  CheckCircle, XCircle, Loader, Settings, Zap, Heart
 } from 'lucide-react';
 
 const SERVER_URL = 'https://fermanta-baby-monitor-server.hf.space';
@@ -231,7 +231,6 @@ export default function MonitorApp() {
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
 
-      // Receive remote tracks (VIDEO and AUDIO)
       pc.ontrack = (event) => {
         addDebugLog(`🎥 Received ${event.track.kind} track`, 'success');
         
@@ -247,8 +246,6 @@ export default function MonitorApp() {
         if (event.streams && event.streams[0]) {
           if (videoRef.current) {
             videoRef.current.srcObject = event.streams[0];
-            
-            // Apply volume setting
             videoRef.current.volume = volume / 100;
             videoRef.current.muted = audioMuted;
             
@@ -305,7 +302,6 @@ export default function MonitorApp() {
     }
   };
 
-  // Toggle audio mute
   const toggleAudioMute = useCallback(() => {
     if (videoRef.current) {
       videoRef.current.muted = !audioMuted;
@@ -314,7 +310,6 @@ export default function MonitorApp() {
     }
   }, [audioMuted, addDebugLog]);
 
-  // Change volume
   const changeVolume = useCallback((newVolume) => {
     setVolume(newVolume);
     if (videoRef.current) {
@@ -322,7 +317,6 @@ export default function MonitorApp() {
     }
   }, []);
 
-  // Force play (for autoplay blocked)
   const forcePlay = useCallback(() => {
     if (videoRef.current) {
       videoRef.current.muted = false;
@@ -338,7 +332,6 @@ export default function MonitorApp() {
     }
   }, [volume, addDebugLog]);
 
-  // Join room
   const joinRoom = async () => {
     const code = inputCode.trim().toUpperCase();
     
@@ -373,7 +366,6 @@ export default function MonitorApp() {
     }
   };
 
-  // Add alert
   const addAlert = useCallback((type, message) => {
     setAlertHistory(prev => [{
       id: Date.now(),
@@ -383,7 +375,6 @@ export default function MonitorApp() {
     }, ...prev.slice(0, 19)]);
   }, []);
 
-  // Play alert sound
   const playAlertSound = useCallback(() => {
     try {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -414,21 +405,18 @@ export default function MonitorApp() {
     }
   }, []);
 
-  // Browser notification
   const showBrowserNotification = useCallback((title, body) => {
     if ('Notification' in window && Notification.permission === 'granted') {
       new Notification(title, { body, icon: '👶' });
     }
   }, []);
 
-  // Request notification permission
   useEffect(() => {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
   }, []);
 
-  // Toggle fullscreen
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       containerRef.current?.requestFullscreen();
@@ -439,7 +427,6 @@ export default function MonitorApp() {
     }
   };
 
-  // Disconnect
   const disconnect = () => {
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
@@ -458,7 +445,6 @@ export default function MonitorApp() {
     setInputCode('');
   };
 
-  // Retry connection
   const retryConnection = () => {
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
@@ -477,7 +463,6 @@ export default function MonitorApp() {
     }
   };
 
-  // Connection duration
   const [connectionDuration, setConnectionDuration] = useState('');
   useEffect(() => {
     if (!sleepStats.connectionTime) return;
@@ -495,400 +480,795 @@ export default function MonitorApp() {
     return () => clearInterval(interval);
   }, [sleepStats.connectionTime]);
 
+  // ============================================
+  // RENDER - NEW DESIGN
+  // ============================================
+
   return (
     <div 
       ref={containerRef}
-      className={`min-h-screen ${nightMode ? 'bg-gray-900' : 'bg-gradient-to-br from-slate-100 to-blue-100'} p-4 transition-colors`}
+      className={`min-h-screen transition-all duration-500 ${
+        nightMode 
+          ? 'bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800' 
+          : 'bg-gradient-to-br from-blue-50 via-white to-purple-50'
+      }`}
     >
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className={`${nightMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl p-4 mb-4`}>
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div className="flex items-center gap-3">
-              <div className={`${nightMode ? 'bg-indigo-900' : 'bg-indigo-100'} p-3 rounded-full`}>
-                <Monitor className={`w-6 h-6 ${nightMode ? 'text-indigo-300' : 'text-indigo-600'}`} />
-              </div>
-              <div>
-                <h1 className={`text-2xl font-bold ${nightMode ? 'text-white' : 'text-gray-800'}`}>
-                  🖥️ Baby Monitor
-                </h1>
-                <div className="flex items-center gap-2 text-sm">
-                  <span className={`flex items-center gap-1 ${socketConnected ? 'text-green-500' : 'text-red-500'}`}>
-                    {socketConnected ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                    Server
-                  </span>
-                  {audioConnected && (
-                    <span className="flex items-center gap-1 text-blue-500">
-                      <Volume2 className="w-3 h-3" />
-                      Audio
-                    </span>
-                  )}
-                  {isConnected && (
-                    <span className={`${nightMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                      • Ruangan: <strong>{roomCode}</strong>
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setNotifications(!notifications)}
-                className={`p-2 rounded-lg ${notifications ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}
-                title="Notifikasi"
-              >
-                {notifications ? <Bell className="w-5 h-5" /> : <BellOff className="w-5 h-5" />}
-              </button>
-              
-              <button
-                onClick={() => setSoundEnabled(!soundEnabled)}
-                className={`p-2 rounded-lg ${soundEnabled ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400'}`}
-                title="Alert Sound"
-              >
-                {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
-              </button>
-              
-              <button
-                onClick={() => setNightMode(!nightMode)}
-                className={`p-2 rounded-lg ${nightMode ? 'bg-yellow-500 text-white' : 'bg-gray-800 text-white'}`}
-                title="Mode Malam"
-              >
-                {nightMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-              </button>
-              
-              <button
-                onClick={toggleFullscreen}
-                className={`p-2 rounded-lg ${nightMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'}`}
-                title="Fullscreen"
-              >
-                {fullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
-              </button>
-              
-              <button
-                onClick={() => setShowDebug(!showDebug)}
-                className={`p-2 rounded-lg ${showDebug ? 'bg-purple-100 text-purple-600' : nightMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'}`}
-                title="Debug Logs"
-              >
-                <Activity className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-        </div>
+      <div className="max-w-7xl mx-auto px-4 py-6">
+        
+        {/* ============ HEADER ============ */}
+        <Header 
+          nightMode={nightMode}
+          socketConnected={socketConnected}
+          audioConnected={audioConnected}
+          roomCode={roomCode}
+          isConnected={isConnected}
+          notifications={notifications}
+          setNotifications={setNotifications}
+          soundEnabled={soundEnabled}
+          setSoundEnabled={setSoundEnabled}
+          nightMode={nightMode}
+          setNightMode={setNightMode}
+          fullscreen={fullscreen}
+          toggleFullscreen={toggleFullscreen}
+          showDebug={showDebug}
+          setShowDebug={setShowDebug}
+        />
 
-        {/* Error */}
+        {/* ============ ERROR BANNER ============ */}
         {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl mb-4 flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5" />
-            <span>{error}</span>
-            <button onClick={() => setError('')} className="ml-auto">✕</button>
-          </div>
-        )}
-
-        {/* Join Room */}
-        {!isConnected && (
-          <div className={`${nightMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl p-8 mb-4`}>
-            <div className="max-w-md mx-auto text-center">
-              <div className={`${nightMode ? 'bg-indigo-900' : 'bg-indigo-100'} w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6`}>
-                <Camera className={`w-10 h-10 ${nightMode ? 'text-indigo-300' : 'text-indigo-600'}`} />
-              </div>
-              
-              <h2 className={`text-2xl font-bold mb-2 ${nightMode ? 'text-white' : 'text-gray-800'}`}>
-                Masukkan Kode Ruangan
-              </h2>
-              <p className={`mb-6 ${nightMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                Dapatkan kode 6 digit dari Camera App di HP
+          <div className={`mb-4 backdrop-blur-lg rounded-2xl border-l-4 border-red-500 ${
+            nightMode 
+              ? 'bg-red-500/10' 
+              : 'bg-red-50/80'
+          } px-6 py-4 flex items-center gap-3 animate-in slide-in-from-top duration-300`}>
+            <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
+            <div className="flex-1">
+              <p className={`font-medium ${nightMode ? 'text-red-300' : 'text-red-800'}`}>
+                {error}
               </p>
-              
-              <div className="flex gap-3 max-w-sm mx-auto">
-                <input
-                  type="text"
-                  value={inputCode}
-                  onChange={(e) => setInputCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-                  onKeyPress={(e) => e.key === 'Enter' && joinRoom()}
-                  placeholder="ABC123"
-                  maxLength={6}
-                  disabled={isConnecting}
-                  className={`flex-1 text-center text-2xl font-mono tracking-[0.3em] py-3 rounded-xl border-2 ${
-                    nightMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-gray-50 border-gray-200'
-                  } focus:border-indigo-500 focus:outline-none`}
-                />
-                <button
-                  onClick={joinRoom}
-                  disabled={isConnecting || !socketConnected}
-                  className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 text-white px-6 py-3 rounded-xl font-semibold flex items-center gap-2"
-                >
-                  {isConnecting ? <Loader className="w-5 h-5 animate-spin" /> : <Wifi className="w-5 h-5" />}
-                </button>
-              </div>
             </div>
+            <button 
+              onClick={() => setError('')}
+              className={`text-lg opacity-60 hover:opacity-100 ${nightMode ? 'text-red-300' : 'text-red-600'}`}
+            >
+              ✕
+            </button>
           </div>
         )}
 
-        {/* Main Content */}
-        {isConnected && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* Video Feed */}
-            <div className="lg:col-span-2">
-              <div className={`${nightMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl p-4`}>
-                <div className="relative bg-black rounded-xl overflow-hidden" style={{ aspectRatio: '16/9' }}>
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    onClick={forcePlay}
-                    className="w-full h-full object-cover cursor-pointer"
-                  />
-                  
-                  {/* No Video Overlay */}
-                  {!videoConnected && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/90">
-                      {!cameraOnline ? (
-                        <>
-                          <VideoOff className="w-16 h-16 text-gray-500 mb-4" />
-                          <p className="text-gray-400 text-lg">Menunggu kamera...</p>
-                        </>
-                      ) : (
-                        <>
-                          <Loader className="w-16 h-16 text-indigo-500 mb-4 animate-spin" />
-                          <p className="text-gray-400 text-lg">Menghubungkan video...</p>
-                          <button
-                            onClick={retryConnection}
-                            className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg flex items-center gap-2"
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                            Coba Ulang
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  )}
+        {/* ============ JOIN ROOM SCREEN ============ */}
+        {!isConnected ? (
+          <JoinRoomScreen 
+            nightMode={nightMode}
+            inputCode={inputCode}
+            setInputCode={setInputCode}
+            isConnecting={isConnecting}
+            socketConnected={socketConnected}
+            joinRoom={joinRoom}
+          />
+        ) : (
+          /* ============ CONNECTED VIEW ============ */
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+            
+            {/* ============ VIDEO SECTION ============ */}
+            <VideoSection 
+              nightMode={nightMode}
+              videoRef={videoRef}
+              videoConnected={videoConnected}
+              cameraOnline={cameraOnline}
+              babyStatus={babyStatus}
+              connectionDuration={connectionDuration}
+              audioMuted={audioMuted}
+              audioConnected={audioConnected}
+              forcePlay={forcePlay}
+              retryConnection={retryConnection}
+              toggleAudioMute={toggleAudioMute}
+              volume={volume}
+              changeVolume={changeVolume}
+              disconnect={disconnect}
+            />
 
-                  {/* Click to unmute hint */}
-                  {videoConnected && audioMuted && audioConnected && (
-                    <div 
-                      className="absolute inset-0 flex items-center justify-center bg-black/50 cursor-pointer"
-                      onClick={forcePlay}
-                    >
-                      <div className="text-center">
-                        <VolumeX className="w-12 h-12 text-white mx-auto mb-2" />
-                        <p className="text-white text-lg">Klik untuk aktifkan audio</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Status Overlay */}
-                  <div className="absolute top-4 left-4 right-4 flex justify-between items-start">
-                    <div className="flex flex-col gap-2">
-                      <div className={`px-3 py-1.5 rounded-full flex items-center gap-2 ${
-                        cameraOnline ? 'bg-green-500' : 'bg-red-500'
-                      } text-white text-sm`}>
-                        {cameraOnline ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
-                        {cameraOnline ? 'Kamera Online' : 'Kamera Offline'}
-                      </div>
-                      
-                      {videoConnected && (
-                        <div className="flex gap-2">
-                          <div className="px-3 py-1.5 rounded-full bg-green-500/80 text-white text-sm flex items-center gap-2">
-                            <Video className="w-4 h-4" />
-                            LIVE
-                          </div>
-                          {audioConnected && (
-                            <div className={`px-3 py-1.5 rounded-full ${audioMuted ? 'bg-red-500/80' : 'bg-blue-500/80'} text-white text-sm flex items-center gap-2`}>
-                              {audioMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                              {audioMuted ? 'Muted' : 'Audio'}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div className={`px-4 py-2 rounded-full ${
-                      babyStatus === 'sleeping' ? 'bg-blue-500' : 
-                      babyStatus === 'awake' ? 'bg-amber-500' : 'bg-gray-500'
-                    } text-white text-lg`}>
-                      {babyStatus === 'sleeping' ? '😴 Tidur' : 
-                       babyStatus === 'awake' ? '👀 Bangun' : '❓'}
-                    </div>
-                  </div>
-                  
-                  {/* Connection Duration */}
-                  {connectionDuration && (
-                    <div className="absolute bottom-4 left-4 px-3 py-1 rounded-full bg-black/50 text-white text-sm">
-                      ⏱️ {connectionDuration}
-                    </div>
-                  )}
-                </div>
-
-                {/* Audio Controls */}
-                {videoConnected && audioConnected && (
-                  <div className={`mt-4 p-4 rounded-xl ${nightMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
-                    <div className="flex items-center gap-4">
-                      <button
-                        onClick={toggleAudioMute}
-                        className={`p-3 rounded-full ${
-                          audioMuted 
-                            ? 'bg-red-500 text-white' 
-                            : 'bg-blue-500 text-white'
-                        }`}
-                      >
-                        {audioMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
-                      </button>
-                      
-                      <div className="flex-1">
-                        <p className={`text-sm mb-1 ${nightMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                          Volume: {volume}%
-                        </p>
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={volume}
-                          onChange={(e) => changeVolume(parseInt(e.target.value))}
-                          disabled={audioMuted}
-                          className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Controls */}
-                <div className="mt-4 flex gap-3 flex-wrap">
-                  <button
-                    onClick={disconnect}
-                    className="flex-1 min-w-[140px] bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2"
-                  >
-                    <XCircle className="w-5 h-5" />
-                    Putuskan
-                  </button>
-                  
-                  <button
-                    onClick={retryConnection}
-                    className={`flex-1 min-w-[140px] ${nightMode ? 'bg-gray-700 text-white' : 'bg-gray-200 text-gray-800'} py-3 rounded-xl font-semibold flex items-center justify-center gap-2`}
-                  >
-                    <RefreshCw className="w-5 h-5" />
-                    Refresh
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Side Panel */}
-            <div className="space-y-4">
-              {/* Status */}
-              <div className={`${nightMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl p-4`}>
-                <h3 className={`font-semibold mb-4 ${nightMode ? 'text-white' : 'text-gray-800'}`}>
-                  📊 Status
-                </h3>
-                
-                <div className={`p-4 rounded-xl border-2 ${
-                  babyStatus === 'sleeping' ? 'bg-blue-50 border-blue-300' : 
-                  babyStatus === 'awake' ? 'bg-amber-50 border-amber-300' : 
-                  'bg-gray-50 border-gray-300'
-                }`}>
-                  <div className="flex items-center gap-2 mb-2">
-                    {babyStatus === 'sleeping' ? <Moon className="w-6 h-6 text-blue-600" /> : <Sun className="w-6 h-6 text-amber-600" />}
-                    <span className="text-sm font-medium text-gray-600">Status Bayi</span>
-                  </div>
-                  <p className="text-2xl font-bold text-gray-800">
-                    {babyStatus === 'sleeping' ? '😴 Tidur' : 
-                     babyStatus === 'awake' ? '👀 Bangun' : '⏳ Memantau...'}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 mt-4">
-                  <div className={`p-3 rounded-xl ${nightMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
-                    <Clock className={`w-5 h-5 ${nightMode ? 'text-gray-400' : 'text-gray-600'} mb-1`} />
-                    <p className={`text-xs ${nightMode ? 'text-gray-400' : 'text-gray-500'}`}>Terbangun</p>
-                    <p className={`text-xl font-bold ${nightMode ? 'text-white' : 'text-gray-800'}`}>
-                      {sleepStats.awakeCount}x
-                    </p>
-                  </div>
-                  <div className={`p-3 rounded-xl ${nightMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
-                    <Volume2 className={`w-5 h-5 ${audioConnected ? 'text-green-500' : 'text-gray-400'} mb-1`} />
-                    <p className={`text-xs ${nightMode ? 'text-gray-400' : 'text-gray-500'}`}>Audio</p>
-                    <p className={`text-xl font-bold ${audioConnected ? 'text-green-500' : 'text-red-500'}`}>
-                      {audioConnected ? '🔊' : '🔇'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Alerts */}
-              <div className={`${nightMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl p-4`}>
-                <h3 className={`font-semibold mb-4 flex items-center gap-2 ${nightMode ? 'text-white' : 'text-gray-800'}`}>
-                  <Bell className="w-5 h-5 text-amber-500" />
-                  Riwayat Alert
-                </h3>
-                
-                {alertHistory.length === 0 ? (
-                  <p className={`text-sm ${nightMode ? 'text-gray-400' : 'text-gray-500'} text-center py-4`}>
-                    Belum ada notifikasi
-                  </p>
-                ) : (
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {alertHistory.slice(0, 5).map((alert) => (
-                      <div 
-                        key={alert.id}
-                        className={`p-3 rounded-lg border ${
-                          alert.type === 'alert' ? 'bg-red-50 border-red-200' :
-                          alert.type === 'warning' ? 'bg-amber-50 border-amber-200' :
-                          'bg-blue-50 border-blue-200'
-                        }`}
-                      >
-                        <div className="flex justify-between">
-                          <span className={`text-sm font-medium ${
-                            alert.type === 'alert' ? 'text-red-800' :
-                            alert.type === 'warning' ? 'text-amber-800' :
-                            'text-blue-800'
-                          }`}>
-                            {alert.message}
-                          </span>
-                          <span className="text-xs text-gray-500">{alert.time}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+            {/* ============ SIDE PANEL ============ */}
+            <SidePanel 
+              nightMode={nightMode}
+              babyStatus={babyStatus}
+              audioConnected={audioConnected}
+              sleepStats={sleepStats}
+              alertHistory={alertHistory}
+            />
           </div>
         )}
 
-        {/* Debug Panel */}
+        {/* ============ DEBUG PANEL ============ */}
         {showDebug && (
-          <div className={`mt-4 ${nightMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl p-4`}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className={`font-semibold ${nightMode ? 'text-white' : 'text-gray-800'}`}>
-                🔧 Debug Logs
-              </h3>
-              <button onClick={() => setDebugLogs([])} className="text-sm text-gray-500">
-                Clear
-              </button>
-            </div>
-            <div className={`${nightMode ? 'bg-gray-900' : 'bg-gray-100'} rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs`}>
-              {debugLogs.map((log, idx) => (
-                <div key={idx} className={`py-0.5 ${
-                  log.type === 'error' ? 'text-red-500' :
-                  log.type === 'warning' ? 'text-amber-500' :
-                  log.type === 'success' ? 'text-green-500' :
-                  nightMode ? 'text-gray-300' : 'text-gray-700'
-                }`}>
-                  [{log.time}] {log.message}
-                </div>
-              ))}
-            </div>
-          </div>
+          <DebugPanel 
+            nightMode={nightMode}
+            debugLogs={debugLogs}
+            setDebugLogs={setDebugLogs}
+          />
         )}
 
-        {/* Tips */}
-        <div className={`mt-4 ${nightMode ? 'bg-indigo-900/50' : 'bg-indigo-50'} rounded-xl p-4`}>
-          <p className={`text-sm ${nightMode ? 'text-indigo-200' : 'text-indigo-800'}`}>
-            🔊 <strong>Audio:</strong> Jika audio tidak terdengar, klik pada video untuk mengaktifkan. 
+        {/* ============ INFO TIP ============ */}
+        <div className={`mt-6 backdrop-blur-xl rounded-2xl border ${
+          nightMode
+            ? 'bg-indigo-500/10 border-indigo-500/30'
+            : 'bg-indigo-50/80 border-indigo-200'
+        } p-4`}>
+          <p className={`text-sm ${nightMode ? 'text-indigo-200' : 'text-indigo-700'}`}>
+            💡 <strong>Pro Tip:</strong> Jika audio tidak terdengar, klik pada video untuk mengaktifkan. 
             Gunakan slider volume untuk mengatur keras-pelannya suara.
           </p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// COMPONENT: HEADER (NEW DESIGN)
+// ============================================
+function Header({ 
+  nightMode, socketConnected, audioConnected, roomCode, isConnected,
+  notifications, setNotifications, soundEnabled, setSoundEnabled,
+  setNightMode, fullscreen, toggleFullscreen, showDebug, setShowDebug 
+}) {
+  return (
+    <div className={`backdrop-blur-xl rounded-3xl border transition-all duration-300 ${
+      nightMode
+        ? 'bg-gradient-to-r from-slate-800/40 to-slate-700/40 border-slate-600/30'
+        : 'bg-gradient-to-r from-white/50 to-blue-50/50 border-white/60'
+    } p-4 mb-6 shadow-lg hover:shadow-xl`}>
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        
+        {/* LOGO & TITLE */}
+        <div className="flex items-center gap-4">
+          <div className={`relative group rounded-2xl p-3 transition-all ${
+            nightMode
+              ? 'bg-gradient-to-br from-indigo-600 to-purple-600'
+              : 'bg-gradient-to-br from-indigo-500 to-purple-500'
+          } shadow-lg hover:shadow-xl hover:scale-105`}>
+            <Monitor className="w-6 h-6 text-white" />
+            <div className="absolute inset-0 rounded-2xl bg-white opacity-0 group-hover:opacity-20 transition-opacity" />
+          </div>
+          
+          <div>
+            <h1 className={`text-3xl font-bold bg-clip-text bg-gradient-to-r ${
+              nightMode
+                ? 'from-indigo-300 via-purple-300 to-pink-300 text-transparent'
+                : 'from-indigo-600 via-purple-600 to-pink-600 text-transparent'
+            }`}>
+              Baby Monitor
+            </h1>
+            <div className="flex items-center gap-3 mt-1 flex-wrap">
+              <StatusBadge 
+                icon={<CheckCircle className="w-3 h-3" />}
+                label="Server"
+                isActive={socketConnected}
+                nightMode={nightMode}
+              />
+              {audioConnected && (
+                <StatusBadge 
+                  icon={<Volume2 className="w-3 h-3" />}
+                  label="Audio"
+                  isActive={true}
+                  nightMode={nightMode}
+                />
+              )}
+              {isConnected && (
+                <span className={`text-xs font-mono px-3 py-1 rounded-full ${
+                  nightMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  #{roomCode}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* CONTROLS */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <ControlButton 
+            icon={notifications ? <Bell /> : <BellOff />}
+            isActive={notifications}
+            onClick={() => setNotifications(!notifications)}
+            title="Notifikasi"
+            nightMode={nightMode}
+          />
+          <ControlButton 
+            icon={soundEnabled ? <Volume2 /> : <VolumeX />}
+            isActive={soundEnabled}
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            title="Alert Sound"
+            nightMode={nightMode}
+          />
+          <ControlButton 
+            icon={nightMode ? <Sun /> : <Moon />}
+            isActive={nightMode}
+            onClick={() => setNightMode(!nightMode)}
+            title="Dark Mode"
+            nightMode={nightMode}
+          />
+          <ControlButton 
+            icon={fullscreen ? <Minimize /> : <Maximize />}
+            onClick={toggleFullscreen}
+            title="Fullscreen"
+            nightMode={nightMode}
+          />
+          <ControlButton 
+            icon={<Activity />}
+            isActive={showDebug}
+            onClick={() => setShowDebug(!showDebug)}
+            title="Debug"
+            nightMode={nightMode}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// COMPONENT: STATUS BADGE
+// ============================================
+function StatusBadge({ icon, label, isActive, nightMode }) {
+  return (
+    <span className={`text-xs font-medium flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all ${
+      isActive
+        ? nightMode
+          ? 'bg-green-500/30 text-green-300'
+          : 'bg-green-100 text-green-700'
+        : nightMode
+          ? 'bg-red-500/30 text-red-300'
+          : 'bg-red-100 text-red-700'
+    }`}>
+      {icon}
+      {label}
+    </span>
+  );
+}
+
+// ============================================
+// COMPONENT: CONTROL BUTTON
+// ============================================
+function ControlButton({ icon, isActive, onClick, title, nightMode }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`p-2.5 rounded-xl transition-all duration-200 hover:scale-110 ${
+        isActive
+          ? nightMode
+            ? 'bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-lg'
+            : 'bg-gradient-to-br from-indigo-500 to-purple-500 text-white shadow-lg'
+          : nightMode
+            ? 'bg-slate-700/50 text-slate-300 hover:bg-slate-600/50'
+            : 'bg-white/50 text-slate-600 hover:bg-white/70'
+      }`}
+    >
+      {icon}
+    </button>
+  );
+}
+
+// ============================================
+// COMPONENT: JOIN ROOM SCREEN
+// ============================================
+function JoinRoomScreen({ 
+  nightMode, inputCode, setInputCode, isConnecting, 
+  socketConnected, joinRoom 
+}) {
+  return (
+    <div className={`backdrop-blur-xl rounded-3xl border transition-all ${
+      nightMode
+        ? 'bg-gradient-to-br from-slate-800/40 to-slate-700/40 border-slate-600/30'
+        : 'bg-gradient-to-br from-white/60 to-blue-50/60 border-white/60'
+    } p-12 shadow-xl`}>
+      <div className="max-w-sm mx-auto text-center space-y-8 animate-in fade-in duration-500">
+        
+        {/* ICON */}
+        <div className={`relative mx-auto w-24 h-24 rounded-3xl ${
+          nightMode
+            ? 'bg-gradient-to-br from-indigo-600 to-purple-600'
+            : 'bg-gradient-to-br from-indigo-500 to-purple-500'
+        } flex items-center justify-center shadow-2xl hover:scale-110 transition-transform`}>
+          <Camera className="w-12 h-12 text-white" />
+          <div className="absolute inset-0 rounded-3xl bg-white/20 animate-pulse" />
+        </div>
+
+        {/* TITLE */}
+        <div>
+          <h2 className={`text-4xl font-bold mb-3 ${
+            nightMode ? 'text-white' : 'text-gray-800'
+          }`}>
+            Masukkan Kode
+          </h2>
+          <p className={`text-base ${
+            nightMode ? 'text-slate-400' : 'text-gray-600'
+          }`}>
+            Ambil kode 6 digit dari Camera App untuk memulai memantau
+          </p>
+        </div>
+
+        {/* INPUT */}
+        <div className="space-y-4">
+          <input
+            type="text"
+            value={inputCode}
+            onChange={(e) => setInputCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+            onKeyPress={(e) => e.key === 'Enter' && joinRoom()}
+            placeholder="ABC123"
+            maxLength={6}
+            disabled={isConnecting}
+            className={`w-full text-center text-4xl font-mono tracking-[0.5em] font-bold py-4 rounded-2xl border-2 transition-all ${
+              nightMode
+                ? 'bg-slate-700/50 border-slate-600 text-white placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30'
+                : 'bg-white/50 border-blue-200 text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30'
+            } outline-none`}
+          />
+
+          {/* BUTTON */}
+          <button
+            onClick={joinRoom}
+            disabled={isConnecting || !socketConnected}
+            className={`w-full py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${
+              isConnecting || !socketConnected
+                ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
+                : 'bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-95'
+            }`}
+          >
+            {isConnecting ? (
+              <>
+                <Loader className="w-5 h-5 animate-spin" />
+                Menghubungkan...
+              </>
+            ) : (
+              <>
+                <Wifi className="w-5 h-5" />
+                Hubungkan Sekarang
+              </>
+            )}
+          </button>
+
+          {!socketConnected && (
+            <p className="text-sm text-red-500 flex items-center gap-2 justify-center">
+              <AlertTriangle className="w-4 h-4" />
+              Belum terhubung ke server
+            </p>
+          )}
+        </div>
+
+        {/* FEATURES */}
+        <div className="grid grid-cols-3 gap-3 pt-6 border-t border-gray-200/20">
+          <div className="text-center">
+            <div className="text-2xl mb-1">📷</div>
+            <p className={`text-xs ${nightMode ? 'text-slate-400' : 'text-gray-600'}`}>Live Video</p>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl mb-1">🔊</div>
+            <p className={`text-xs ${nightMode ? 'text-slate-400' : 'text-gray-600'}`}>Audio Clear</p>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl mb-1">👶</div>
+            <p className={`text-xs ${nightMode ? 'text-slate-400' : 'text-gray-600'}`}>Baby Status</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// COMPONENT: VIDEO SECTION
+// ============================================
+function VideoSection({
+  nightMode, videoRef, videoConnected, cameraOnline, babyStatus,
+  connectionDuration, audioMuted, audioConnected, forcePlay, retryConnection,
+  toggleAudioMute, volume, changeVolume, disconnect
+}) {
+  return (
+    <div className="lg:col-span-2 space-y-4">
+      {/* VIDEO CONTAINER */}
+      <div className={`backdrop-blur-xl rounded-3xl border overflow-hidden transition-all ${
+        nightMode
+          ? 'bg-gradient-to-br from-slate-800/40 to-slate-700/40 border-slate-600/30'
+          : 'bg-gradient-to-br from-white/60 to-blue-50/60 border-white/60'
+      } shadow-xl hover:shadow-2xl`}>
+        <div className="relative bg-black rounded-3xl overflow-hidden" style={{ aspectRatio: '16/9' }}>
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            onClick={forcePlay}
+            className="w-full h-full object-cover cursor-pointer"
+          />
+          
+          {/* NO VIDEO OVERLAY */}
+          {!videoConnected && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-black/50 to-black/80 backdrop-blur-sm">
+              {!cameraOnline ? (
+                <>
+                  <VideoOff className="w-20 h-20 text-red-400/60 mb-4 animate-pulse" />
+                  <p className="text-gray-300 text-lg font-medium">Menunggu Kamera Terhubung...</p>
+                  <p className="text-gray-500 text-sm mt-2">Pastikan camera app sudah aktif</p>
+                </>
+              ) : (
+                <>
+                  <Loader className="w-20 h-20 text-indigo-400 mb-4 animate-spin" />
+                  <p className="text-gray-300 text-lg font-medium">Menghubungkan Video...</p>
+                  <button
+                    onClick={retryConnection}
+                    className="mt-6 px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white rounded-xl font-semibold flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Coba Ulang
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* CLICK TO UNMUTE HINT */}
+          {videoConnected && audioMuted && audioConnected && (
+            <div 
+              className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm cursor-pointer hover:bg-black/40 transition-all"
+              onClick={forcePlay}
+            >
+              <div className="text-center animate-in zoom-in">
+                <VolumeX className="w-16 h-16 text-white mx-auto mb-3" />
+                <p className="text-white text-lg font-semibold">Klik untuk aktifkan audio</p>
+              </div>
+            </div>
+          )}
+
+          {/* STATUS OVERLAYS */}
+          <div className="absolute top-4 left-4 right-4 flex justify-between items-start pointer-events-none">
+            {/* LEFT SECTION */}
+            <div className="flex flex-col gap-3">
+              {/* Camera Status */}
+              <div className={`backdrop-blur-lg rounded-2xl px-4 py-2 flex items-center gap-2 border transition-all ${
+                cameraOnline
+                  ? 'bg-green-500/20 border-green-500/40 text-green-300'
+                  : 'bg-red-500/20 border-red-500/40 text-red-300'
+              }`}>
+                {cameraOnline ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+                <span className="text-sm font-medium">{cameraOnline ? 'Kamera Online' : 'Offline'}</span>
+              </div>
+              
+              {/* Live Badge */}
+              {videoConnected && (
+                <div className="flex gap-2">
+                  <div className="backdrop-blur-lg rounded-2xl px-4 py-2 bg-green-500/30 border border-green-500/50 text-green-300 flex items-center gap-2 animate-pulse">
+                    <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                    <span className="text-sm font-bold">LIVE</span>
+                  </div>
+                  {audioConnected && (
+                    <div className={`backdrop-blur-lg rounded-2xl px-4 py-2 border flex items-center gap-2 transition-all ${
+                      audioMuted
+                        ? 'bg-red-500/20 border-red-500/40 text-red-300'
+                        : 'bg-blue-500/20 border-blue-500/40 text-blue-300'
+                    }`}>
+                      {audioMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                      <span className="text-sm font-medium">{audioMuted ? 'Muted' : 'Audio'}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* BABY STATUS - RIGHT SECTION */}
+            <div className={`backdrop-blur-lg rounded-2xl px-5 py-3 border font-bold text-lg transition-all ${
+              babyStatus === 'sleeping'
+                ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
+                : babyStatus === 'awake'
+                  ? 'bg-amber-500/20 border-amber-500/40 text-amber-300 animate-pulse'
+                  : 'bg-gray-500/20 border-gray-500/40 text-gray-300'
+            }`}>
+              {babyStatus === 'sleeping' ? '😴' : babyStatus === 'awake' ? '👀' : '❓'} 
+              <span className="ml-2 text-base font-semibold">
+                {babyStatus === 'sleeping' ? 'Tidur' : babyStatus === 'awake' ? 'Bangun' : 'Monitoring'}
+              </span>
+            </div>
+          </div>
+          
+          {/* CONNECTION DURATION */}
+          {connectionDuration && (
+            <div className="absolute bottom-4 left-4 backdrop-blur-lg rounded-2xl px-4 py-2 bg-black/40 border border-white/20 text-white text-sm font-mono">
+              ⏱️ {connectionDuration}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* AUDIO CONTROLS */}
+      {videoConnected && audioConnected && (
+        <div className={`backdrop-blur-xl rounded-3xl border p-5 transition-all ${
+          nightMode
+            ? 'bg-gradient-to-br from-slate-800/40 to-slate-700/40 border-slate-600/30'
+            : 'bg-gradient-to-br from-white/60 to-blue-50/60 border-white/60'
+        } shadow-lg`}>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={toggleAudioMute}
+              className={`flex-shrink-0 p-3 rounded-2xl transition-all hover:scale-110 ${
+                audioMuted
+                  ? 'bg-gradient-to-br from-red-500 to-red-600 text-white shadow-lg'
+                  : 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg'
+              }`}
+            >
+              {audioMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
+            </button>
+            
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-2">
+                <p className={`text-sm font-semibold ${nightMode ? 'text-slate-300' : 'text-gray-700'}`}>
+                  Volume
+                </p>
+                <span className={`text-sm font-bold ${nightMode ? 'text-indigo-400' : 'text-indigo-600'}`}>
+                  {volume}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={volume}
+                onChange={(e) => changeVolume(parseInt(e.target.value))}
+                disabled={audioMuted}
+                className={`w-full h-3 rounded-full appearance-none cursor-pointer transition-all ${
+                  nightMode
+                    ? 'bg-slate-700'
+                    : 'bg-gray-300'
+                } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gradient-to-r [&::-webkit-slider-thumb]:from-indigo-500 [&::-webkit-slider-thumb]:to-purple-500 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg`}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ACTION BUTTONS */}
+      <div className="flex gap-3">
+        <button
+          onClick={disconnect}
+          className="flex-1 py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+        >
+          <XCircle className="w-5 h-5" />
+          Putuskan
+        </button>
+        
+        <button
+          onClick={retryConnection}
+          className={`flex-1 py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${
+            nightMode
+              ? 'bg-slate-700/50 text-slate-200 hover:bg-slate-600/50'
+              : 'bg-white/50 text-gray-700 hover:bg-white/70'
+          } shadow-lg hover:shadow-xl hover:scale-105 active:scale-95`}
+        >
+          <RefreshCw className="w-5 h-5" />
+          Refresh
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// COMPONENT: SIDE PANEL
+// ============================================
+function SidePanel({ nightMode, babyStatus, audioConnected, sleepStats, alertHistory }) {
+  return (
+    <div className="space-y-4">
+      {/* STATUS CARD */}
+      <div className={`backdrop-blur-xl rounded-3xl border p-6 transition-all ${
+        nightMode
+          ? 'bg-gradient-to-br from-slate-800/40 to-slate-700/40 border-slate-600/30'
+          : 'bg-gradient-to-br from-white/60 to-blue-50/60 border-white/60'
+      } shadow-xl hover:shadow-2xl`}>
+        <h3 className={`font-bold mb-5 text-lg flex items-center gap-2 ${nightMode ? 'text-white' : 'text-gray-800'}`}>
+          <Heart className={`w-5 h-5 ${babyStatus === 'awake' ? 'text-red-500 animate-pulse' : 'text-slate-400'}`} />
+          Status Bayi
+        </h3>
+        
+        <div className={`p-6 rounded-2xl border-2 transition-all ${
+          babyStatus === 'sleeping'
+            ? nightMode
+              ? 'bg-blue-500/10 border-blue-500/30'
+              : 'bg-blue-50 border-blue-300'
+            : babyStatus === 'awake'
+              ? nightMode
+                ? 'bg-amber-500/10 border-amber-500/30'
+                : 'bg-amber-50 border-amber-300'
+              : nightMode
+                ? 'bg-slate-700/50 border-slate-600'
+                : 'bg-gray-50 border-gray-300'
+        }`}>
+          <div className="flex items-center gap-3 mb-3">
+            {babyStatus === 'sleeping' ? (
+              <Moon className="w-7 h-7 text-blue-500" />
+            ) : (
+              <Sun className="w-7 h-7 text-amber-500" />
+            )}
+            <span className={`text-sm font-semibold ${nightMode ? 'text-slate-400' : 'text-gray-600'}`}>
+              Status Terkini
+            </span>
+          </div>
+          <p className={`text-3xl font-black ${
+            babyStatus === 'sleeping'
+              ? 'text-blue-600'
+              : babyStatus === 'awake'
+                ? 'text-amber-600'
+                : nightMode
+                  ? 'text-slate-400'
+                  : 'text-gray-600'
+          }`}>
+            {babyStatus === 'sleeping' ? '😴 Tidur' : 
+             babyStatus === 'awake' ? '👀 Bangun' : '⏳ Monitoring'}
+          </p>
+        </div>
+
+        {/* STATS GRID */}
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          <StatCard 
+            icon={<Clock className="w-5 h-5" />}
+            label="Terbangun"
+            value={`${sleepStats.awakeCount}x`}
+            nightMode={nightMode}
+          />
+          <StatCard 
+            icon={<Volume2 className="w-5 h-5" />}
+            label="Audio"
+            value={audioConnected ? '🔊' : '🔇'}
+            isActive={audioConnected}
+            nightMode={nightMode}
+          />
+        </div>
+      </div>
+
+      {/* ALERTS CARD */}
+      <div className={`backdrop-blur-xl rounded-3xl border p-6 transition-all ${
+        nightMode
+          ? 'bg-gradient-to-br from-slate-800/40 to-slate-700/40 border-slate-600/30'
+          : 'bg-gradient-to-br from-white/60 to-blue-50/60 border-white/60'
+      } shadow-xl hover:shadow-2xl`}>
+        <h3 className={`font-bold mb-4 text-lg flex items-center gap-2 ${nightMode ? 'text-white' : 'text-gray-800'}`}>
+          <Bell className="w-5 h-5 text-amber-500" />
+          Riwayat Alert
+        </h3>
+        
+        {alertHistory.length === 0 ? (
+          <div className={`text-center py-8 ${nightMode ? 'text-slate-400' : 'text-gray-500'}`}>
+            <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">Belum ada notifikasi</p>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {alertHistory.slice(0, 6).map((alert) => (
+              <AlertItem 
+                key={alert.id}
+                alert={alert}
+                nightMode={nightMode}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// COMPONENT: STAT CARD
+// ============================================
+function StatCard({ icon, label, value, isActive, nightMode }) {
+  return (
+    <div className={`p-4 rounded-2xl transition-all ${
+      isActive
+        ? nightMode
+          ? 'bg-green-500/20 border border-green-500/40'
+          : 'bg-green-50 border border-green-200'
+        : nightMode
+          ? 'bg-slate-700/50 border border-slate-600'
+          : 'bg-white/50 border border-gray-200'
+    }`}>
+      <div className={`${isActive ? (nightMode ? 'text-green-400' : 'text-green-600') : (nightMode ? 'text-slate-400' : 'text-gray-600')} mb-2`}>
+        {icon}
+      </div>
+      <p className={`text-xs font-medium mb-1 ${nightMode ? 'text-slate-400' : 'text-gray-600'}`}>
+        {label}
+      </p>
+      <p className={`text-2xl font-bold ${
+        isActive ? (nightMode ? 'text-green-400' : 'text-green-600') : (nightMode ? 'text-slate-300' : 'text-gray-700')
+      }`}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+// ============================================
+// COMPONENT: ALERT ITEM
+// ============================================
+function AlertItem({ alert, nightMode }) {
+  const alertStyles = {
+    alert: nightMode
+      ? 'bg-red-500/10 border-red-500/30'
+      : 'bg-red-50 border-red-200',
+    warning: nightMode
+      ? 'bg-amber-500/10 border-amber-500/30'
+      : 'bg-amber-50 border-amber-200',
+    info: nightMode
+      ? 'bg-blue-500/10 border-blue-500/30'
+      : 'bg-blue-50 border-blue-200'
+  };
+
+  const textColors = {
+    alert: nightMode ? 'text-red-300' : 'text-red-800',
+    warning: nightMode ? 'text-amber-300' : 'text-amber-800',
+    info: nightMode ? 'text-blue-300' : 'text-blue-800'
+  };
+
+  return (
+    <div className={`p-3 rounded-xl border backdrop-blur-sm transition-all ${alertStyles[alert.type]}`}>
+      <div className="flex items-start justify-between gap-2">
+        <span className={`text-sm font-semibold ${textColors[alert.type]}`}>
+          {alert.message}
+        </span>
+        <span className={`text-xs whitespace-nowrap ${nightMode ? 'text-slate-500' : 'text-gray-500'}`}>
+          {alert.time}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// COMPONENT: DEBUG PANEL
+// ============================================
+function DebugPanel({ nightMode, debugLogs, setDebugLogs }) {
+  return (
+    <div className={`mt-6 backdrop-blur-xl rounded-3xl border p-6 transition-all ${
+      nightMode
+        ? 'bg-gradient-to-br from-slate-800/40 to-slate-700/40 border-slate-600/30'
+        : 'bg-gradient-to-br from-white/60 to-blue-50/60 border-white/60'
+    } shadow-xl animate-in slide-in-from-bottom duration-300`}>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className={`font-bold text-lg flex items-center gap-2 ${nightMode ? 'text-white' : 'text-gray-800'}`}>
+          <Activity className="w-5 h-5 text-indigo-500" />
+          Debug Logs
+        </h3>
+        <button 
+          onClick={() => setDebugLogs([])}
+          className={`text-xs font-semibold px-3 py-1 rounded-lg transition-all ${
+            nightMode
+              ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+              : 'bg-red-100 text-red-700 hover:bg-red-200'
+          }`}
+        >
+          Clear
+        </button>
+      </div>
+      <div className={`rounded-2xl p-4 max-h-48 overflow-y-auto font-mono text-xs space-y-1 ${
+        nightMode ? 'bg-slate-900/50' : 'bg-gray-900/80'
+      }`}>
+        {debugLogs.map((log, idx) => (
+          <div 
+            key={idx} 
+            className={`py-0.5 transition-all ${
+              log.type === 'error' ? 'text-red-400' :
+              log.type === 'warning' ? 'text-amber-400' :
+              log.type === 'success' ? 'text-green-400' :
+              nightMode ? 'text-gray-400' : 'text-gray-300'
+            }`}
+          >
+            <span className={`opacity-50 ${nightMode ? 'text-slate-600' : 'text-gray-600'}`}>
+              [{log.time}]
+            </span> {log.message}
+          </div>
+        ))}
+        {debugLogs.length === 0 && (
+          <p className={`text-center py-4 ${nightMode ? 'text-slate-600' : 'text-gray-500'}`}>
+            No logs yet...
+          </p>
+        )}
       </div>
     </div>
   );
